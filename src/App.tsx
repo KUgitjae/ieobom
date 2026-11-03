@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import './App.css'
 
 type Line = {
@@ -27,24 +27,27 @@ type Story = {
   createdAt: number
 }
 
-const STORAGE_KEY = 'ieobom-stories'
-const USER_KEY = 'ieobom-user'
-
-function loadStories(): Story[] {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
-  } catch {
-    return []
-  }
+async function api(path: string, payload?: object) {
+  const response = await fetch('/api/' + path, payload ? {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  } : undefined)
+  const data = await response.json()
+  if (!response.ok) throw new Error(data.error || '요청을 처리하지 못했습니다.')
+  return data
 }
 
 export default function App() {
-  const [stories, setStories] = useState<Story[]>(loadStories)
-  const [user, setUser] = useState(localStorage.getItem(USER_KEY) || '')
+  const [stories, setStories] = useState<Story[]>([])
+  const [user, setUser] = useState('')
   const [name, setName] = useState('')
+  const [password, setPassword] = useState('')
+  const [register, setRegister] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [auth, setAuth] = useState(false)
   const [create, setCreate] = useState(false)
-  const [storyId, setStoryId] = useState<string | null>(null)
+  const [storyId, setStoryId] = useState<string | null>(() => new URLSearchParams(location.search).get('story'))
 
   const [title, setTitle] = useState('')
   const [genre, setGenre] = useState('판타지')
@@ -58,145 +61,87 @@ export default function App() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stories))
-  }, [stories])
-
-  useEffect(() => {
-    localStorage.setItem(USER_KEY, user)
-  }, [user])
+    api('state').then(data => {
+      setStories(data.stories)
+      setUser(data.user)
+      if (storyId && !data.stories.some((story: Story) => story.id === storyId)) {
+        setError('해당 이야기를 찾을 수 없습니다.')
+      }
+    }).catch(() => setError('서버에 연결할 수 없습니다.'))
+  }, [])
 
   const currentStory = stories.find(s => s.id === storyId) || null
 
+  async function submit(path: string, payload: object, onSuccess?: (data: any) => void) {
+    if (busy) return
+    setBusy(true)
+    setError('')
+    try {
+      const data = await api(path, payload)
+      setStories(data.stories)
+      setUser(data.user)
+      onSuccess?.(data)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : '요청을 처리하지 못했습니다.')
+      try { setStories((await api('state')).stories) } catch { /* Keep the current view offline. */ }
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function login(e: React.FormEvent) {
     e.preventDefault()
-    if (!name.trim()) return
-    setUser(name.trim())
-    setAuth(false)
-    setName('')
-    setError('')
+    void submit(register ? 'register' : 'login', { name, password }, () => {
+      setAuth(false)
+      setPassword('')
+    })
   }
 
   function logout() {
-    setUser('')
-    setError('로그아웃되었습니다.')
+    void submit('logout', {})
   }
 
   function createStory(e: React.FormEvent) {
     e.preventDefault()
-
-    if (!user) {
-      setAuth(true)
-      return
-    }
-
-    const firstLine: Line = {
-      id: crypto.randomUUID(),
-      author: user,
-      content: sentence.trim()
-    }
-
-    const newStory: Story = {
-      id: crypto.randomUUID(),
-      title: title.trim(),
-      genre,
-      target,
-      status: target === 1 ? 'completed' : 'writing',
-      creator: user,
-      lines: [firstLine],
-      comments: [],
-      ratings: [],
-      createdAt: Date.now()
-    }
-
-    setStories(prev => [newStory, ...prev])
-    setStoryId(newStory.id)
-    setCreate(false)
-    setTitle('')
-    setSentence('')
-    setError('')
+    if (!user) { setAuth(true); return }
+    void submit('create', { title, genre, target, content: sentence }, data => {
+      setStoryId(data.id)
+      setCreate(false)
+      setTitle('')
+      setSentence('')
+    })
   }
 
   function addSentence(e: React.FormEvent) {
     e.preventDefault()
-
-    if (!user || !currentStory) {
-      setAuth(true)
-      return
-    }
-
-    if (currentStory.lines.at(-1)?.author === user) {
-      setError('다른 작가가 먼저 문장을 작성해야 합니다.')
-      return
-    }
-
-    if (!sentence.trim()) return
-
-    const newLine: Line = {
-      id: crypto.randomUUID(),
-      author: user,
-      content: sentence.trim()
-    }
-
-    setStories(prev => prev.map(s => {
-      if (s.id !== currentStory.id) return s
-
-      const newLines = [...s.lines, newLine]
-
-      return {
-        ...s,
-        lines: newLines,
-        status: newLines.length >= s.target ? 'completed' : 'writing'
-      }
-    }))
-
-    setSentence('')
-    setError('문장을 추가했습니다!')
+    if (!currentStory || !user) return
+    void submit('line', {
+      id: currentStory.id,
+      previous: currentStory.lines.at(-1)?.id,
+      content: sentence
+    }, () => setSentence(''))
   }
 
   function addComment(e: React.FormEvent) {
     e.preventDefault()
-
-    if (!user) {
-      setAuth(true)
-      return
-    }
-
-    if (!currentStory || !comment.trim()) return
-
-    const newComment: Comment = {
-      id: crypto.randomUUID(),
-      author: user,
-      content: comment.trim()
-    }
-
-    setStories(prev => prev.map(s =>
-      s.id === currentStory.id
-        ? { ...s, comments: [...s.comments, newComment] }
-        : s
-    ))
-
-    setComment('')
-    setError('댓글을 남겼습니다')
+    if (!user) { setAuth(true); return }
+    void submit('comment', { id: storyId, content: comment }, () => setComment(''))
   }
 
   function addRating(score: number) {
-    if (!user) {
-      setAuth(true)
-      return
+    if (!user) { setAuth(true); return }
+    void submit('rating', { id: storyId, score })
+  }
+
+  async function shareStory() {
+    const url = new URL(location.href)
+    url.searchParams.set('story', storyId!)
+    try {
+      await navigator.clipboard.writeText(url.href)
+      setError('공유 링크를 복사했습니다.')
+    } catch {
+      window.prompt('이야기 공유 링크', url.href)
     }
-
-    if (!currentStory) return
-
-    setStories(prev => prev.map(s => {
-      if (s.id !== currentStory.id) return s
-
-      const ratings = [...s.ratings]
-      ratings.push(score)
-
-      return { ...s, ratings }
-    }))
-
-    setError(`${score}점을 평가했습니다.`)
   }
 
   const shown = stories
@@ -214,6 +159,9 @@ export default function App() {
     })
 
   function closeStory() {
+    const url = new URL(location.href)
+    url.searchParams.delete('story')
+    history.replaceState(null, '', url)
     setStoryId(null)
     setSentence('')
     setComment('')
@@ -368,15 +316,16 @@ export default function App() {
           )}
         </section>
 
+        {error && !auth && !currentStory && !create && <p role="alert">{error}</p>}
         <footer>이어봄 © 2026 · 상상은 각자, 이야기는 함께.</footer>
       </main>
 
       {auth && (
         <div className="overlay">
-          <section className="modal" role="dialog" aria-modal="true">
+          <section className="modal auth-modal" role="dialog" aria-modal="true">
             <button className="close" onClick={() => setAuth(false)}>✕</button>
             <span className="eyebrow">WELCOME TO IEOBOM</span>
-            <h2>어떤 이름으로 이야기를 쓸까요?</h2>
+            <h2>{register ? '필명 계정 만들기' : '필명으로 로그인'}</h2>
 
             <form onSubmit={login}>
               <label>
@@ -389,11 +338,20 @@ export default function App() {
                   placeholder="사용할 이름을 입력해 주세요"
                 />
               </label>
-              <button className="primary">시작하기</button>
+              <label>
+                비밀번호
+                <input type="password" required minLength={8} maxLength={128}
+                  autoComplete={register ? 'new-password' : 'current-password'}
+                  value={password} onChange={e => setPassword(e.target.value)} />
+              </label>
+              <button disabled={busy} className="primary">{register ? '가입하기' : '로그인'}</button>
             </form>
 
             <p className="muted">
-              별도의 회원가입 없이 필명으로 이용할 수 있습니다.
+              <button type="button" onClick={() => { setRegister(!register); setError('') }}>
+                {register ? '로그인으로 돌아가기' : '새 필명 계정 만들기'}
+              </button>
+              {error && <span role="alert">{error}</span>}
             </p>
           </section>
         </div>
@@ -452,7 +410,8 @@ export default function App() {
                 />
               </label>
 
-              <button className="primary">첫 페이지 펼치기</button>
+              <button disabled={busy} className="primary">첫 페이지 펼치기</button>
+              {error && <p role="alert">{error}</p>}
             </form>
           </section>
         </div>
@@ -469,6 +428,7 @@ export default function App() {
             </span>
 
             <h2>{currentStory.title}</h2>
+            <button type="button" onClick={shareStory}>공유 링크 복사</button>
 
             <p className="muted">
               {currentStory.creator} 님의 첫 문장에서 시작된 이야기 ·
@@ -506,7 +466,7 @@ export default function App() {
                       onChange={e => setSentence(e.target.value)}
                       placeholder="마지막 문장에 이어 써 주세요"
                     />
-                    <button className="primary">내 문장 이어 놓기</button>
+                    <button disabled={busy} className="primary">내 문장 이어 놓기</button>
                   </form>
                 )}
               </section>
@@ -526,6 +486,7 @@ export default function App() {
                   {[1, 2, 3, 4, 5].map(n => (
                     <button
                       key={n}
+                      disabled={busy}
                       aria-label={`${n}점 주기`}
                       onClick={() => addRating(n)}
                     >
@@ -553,7 +514,7 @@ export default function App() {
                       onChange={e => setComment(e.target.value)}
                     />
                   </label>
-                  <button className="primary">댓글 저장</button>
+                  <button disabled={busy} className="primary">댓글 저장</button>
                 </form>
               </section>
             )}

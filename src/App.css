@@ -24,7 +24,7 @@
 
 * {
   box-sizing: border-box;
-}npm run build
+}
 
 body {
   margin: 0;
@@ -768,4 +768,4 @@ textarea::placeholder {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
-}
+}.overlay:has(.auth-modal) { z-index: 1000; }
