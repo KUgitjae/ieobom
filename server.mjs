@@ -136,9 +136,29 @@ createServer(async (req, res) => {
       res.setHeader('Set-Cookie', cookie('', 0))
       return json(state(''))
     }
-    if (!['create', 'line', 'comment', 'rating'].includes(action)) fail('요청 경로를 찾을 수 없습니다.', 404)
-    if (!user) fail('로그인해 주세요.', 401)
-    return json(state(user, { id: writeStory(action, body, user) }))
+    if (!['create', 'line', 'comment', 'rating', 'delete'].includes(action)) {
+  fail('요청 경로를 찾을 수 없습니다.', 404)
+}
+if (!user) fail('로그인해 주세요.', 401)
+
+if (action === 'delete') {
+  if (typeof body.id !== 'string' || !body.id) {
+    fail('이야기 ID를 확인해 주세요.')
+  }
+
+  const result = db.prepare(`
+    DELETE FROM stories
+    WHERE id = ? AND json_extract(data, '$.creator') = ?
+  `).run(body.id, user)
+
+  if (!result.changes) {
+    fail('이야기를 찾을 수 없거나 삭제 권한이 없습니다.', 404)
+  }
+
+  return json(state(user))
+}
+
+return json(state(user, { id: writeStory(action, body, user) }))
   } catch (error) {
     if (!error.status) console.error(error)
     json({ error: error.status ? error.message : '서버 오류가 발생했습니다.' }, error.status || 500)
