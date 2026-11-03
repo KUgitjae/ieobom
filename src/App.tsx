@@ -132,7 +132,16 @@ export default function App() {
     if (!user) { setAuth(true); return }
     void submit('rating', { id: storyId, score })
   }
+  function deleteStory() {
+  if (!currentStory || currentStory.creator !== user) return
 
+  const confirmed = window.confirm(
+    `‘${currentStory.title}’ 이야기를 삭제할까요? 이어 쓴 문장, 댓글, 별점도 함께 삭제됩니다.`
+  )
+  if (!confirmed) return
+
+  void submit('delete', { id: currentStory.id }, closeStory)
+}
   async function shareStory() {
     const url = new URL(location.href)
     url.searchParams.set('story', storyId!)
@@ -429,6 +438,11 @@ export default function App() {
 
             <h2>{currentStory.title}</h2>
             <button type="button" onClick={shareStory}>공유 링크 복사</button>
+            {user && currentStory.creator === user && (
+              <button type="button" onClick={deleteStory} disabled={busy}>
+                이야기 삭제
+              </button>
+            )}
 
             <p className="muted">
               {currentStory.creator} 님의 첫 문장에서 시작된 이야기 ·
